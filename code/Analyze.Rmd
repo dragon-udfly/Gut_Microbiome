@@ -29,3 +29,15 @@ res_dir <- file.path("..", "results")
 dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
 dir.create(res_dir, showWarnings = FALSE, recursive = TRUE)
 ```
+
+# 1. Data import
+
+```{r import}
+data("airway")                      # RangedSummarizedExperiment object
+se <- airway
+
+dim(se)                             # genes x samples
+as.data.frame(colData(se)) %>%
+  select(SampleName, cell, dex, Run)  # sample metadata
+```
+
