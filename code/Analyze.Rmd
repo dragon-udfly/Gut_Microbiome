@@ -170,3 +170,26 @@ pheatmap(mat, annotation_col = anno,
          main = "Top 30 differentially expressed genes")
 ```
 
+# 5. Functional enrichment (optional)
+
+```{r go, warning=FALSE, message=FALSE}
+if (requireNamespace("clusterProfiler", quietly = TRUE) &&
+    requireNamespace("org.Hs.eg.db", quietly = TRUE)) {
+
+  sig <- res_df %>% filter(padj < 0.05, abs(log2FoldChange) > 1)
+  universe <- res_df$ensembl[!is.na(res_df$padj)]
+
+  ego <- clusterProfiler::enrichGO(
+    gene = sig$ensembl, universe = universe,
+    OrgDb = org.Hs.eg.db::org.Hs.eg.db, keyType = "ENSEMBL",
+    ont = "BP", pAdjustMethod = "BH", qvalueCutoff = 0.05)
+
+  if (!is.null(ego) && nrow(as.data.frame(ego)) > 0) {
+    print(enrichplot::dotplot(ego, showCategory = 15))
+    ggsave(file.path(fig_dir, "06_go_dotplot.png"), width = 8, height = 6)
+  } else cat("No significant GO terms.\n")
+} else {
+  cat("GO enrichment skipped: install clusterProfiler + org.Hs.eg.db.\n")
+}
+```
+
