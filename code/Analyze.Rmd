@@ -128,3 +128,24 @@ write_csv(res_df, file.path(res_dir, "DE_results_dex_vs_untrt.csv"))
 head(res_df, 10)
 ```
 
+```{r volcano, warning=FALSE}
+res_df <- res_df %>%
+  mutate(status = case_when(
+    padj < 0.05 & log2FoldChange >  1 ~ "Up",
+    padj < 0.05 & log2FoldChange < -1 ~ "Down",
+    TRUE ~ "Not significant"))
+
+p_vol <- ggplot(res_df, aes(log2FoldChange, -log10(pvalue), colour = status)) +
+  geom_point(alpha = 0.6, size = 1) +
+  scale_colour_manual(values = c(Up = "firebrick", Down = "steelblue",
+                                 `Not significant` = "grey70")) +
+  geom_text(data = head(filter(res_df, status != "Not significant"), 10),
+            aes(label = label), size = 3, vjust = -0.5, colour = "black") +
+  labs(title = "Volcano plot: dexamethasone vs untreated") +
+  theme_minimal()
+p_vol
+ggsave(file.path(fig_dir, "04_volcano.png"), p_vol, width = 7, height = 5)
+
+table(res_df$status)
+```
+
