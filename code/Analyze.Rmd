@@ -102,3 +102,29 @@ grid::grid.newpage()
 grid::grid.draw(ph1$gtable)
 ```
 
+# 4. Differential expression (DESeq2)
+
+```{r deseq}
+dds <- DESeq(dds)
+res <- results(dds, contrast = c("dex", "trt", "untrt"), alpha = 0.05)
+summary(res)
+
+res_df <- as.data.frame(res) %>%
+  rownames_to_column("ensembl") %>%
+  arrange(padj)
+
+# Optional: add gene symbols if org.Hs.eg.db is installed
+if (requireNamespace("org.Hs.eg.db", quietly = TRUE)) {
+  res_df$symbol <- AnnotationDbi::mapIds(
+    org.Hs.eg.db::org.Hs.eg.db,
+    keys = res_df$ensembl, keytype = "ENSEMBL",
+    column = "SYMBOL", multiVals = "first")
+} else {
+  res_df$symbol <- NA_character_
+}
+res_df$label <- ifelse(is.na(res_df$symbol), res_df$ensembl, res_df$symbol)
+
+write_csv(res_df, file.path(res_dir, "DE_results_dex_vs_untrt.csv"))
+head(res_df, 10)
+```
+
