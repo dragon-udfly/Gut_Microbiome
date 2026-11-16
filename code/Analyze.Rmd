@@ -69,3 +69,36 @@ p_lib
 ggsave(file.path(fig_dir, "01_library_size.png"), p_lib, width = 7, height = 4)
 ```
 
+# 3. Exploratory analysis
+
+```{r eda}
+# Variance-stabilising transformation for visualisation
+vsd <- vst(dds, blind = TRUE)
+
+# PCA
+pca <- plotPCA(vsd, intgroup = c("dex", "cell"), returnData = TRUE)
+pct <- round(100 * attr(pca, "percentVar"))
+
+p_pca <- ggplot(pca, aes(PC1, PC2, colour = dex, shape = cell)) +
+  geom_point(size = 4) +
+  labs(title = "PCA of VST-transformed counts",
+       x = paste0("PC1: ", pct[1], "% variance"),
+       y = paste0("PC2: ", pct[2], "% variance")) +
+  theme_minimal()
+p_pca
+ggsave(file.path(fig_dir, "02_pca.png"), p_pca, width = 7, height = 5)
+
+# Sample-to-sample distance heatmap
+dist_mat <- as.matrix(dist(t(assay(vsd))))
+rownames(dist_mat) <- paste(vsd$dex, vsd$cell, sep = "-")
+colnames(dist_mat) <- NULL
+
+ph1 <- pheatmap(dist_mat, main = "Sample distances", silent = TRUE)
+png(file.path(fig_dir, "03_sample_distance.png"),
+    width = 1000, height = 800, res = 150)
+grid::grid.draw(ph1$gtable)
+dev.off()
+grid::grid.newpage()
+grid::grid.draw(ph1$gtable)
+```
+
