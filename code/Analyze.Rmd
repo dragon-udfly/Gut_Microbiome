@@ -1,0 +1,31 @@
+---
+title: "Dexamethasone Response in Airway Smooth Muscle Cells (airway, RNA-seq)"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+  pdf_document:
+    toc: true
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+# ---- ONE-TIME INSTALLS (run in Console, NOT here) ----
+# install.packages(c("tidyverse", "pheatmap"))
+# BiocManager::install(c("DESeq2", "airway"))
+# Optional (gene symbols + GO enrichment):
+# BiocManager::install(c("org.Hs.eg.db", "clusterProfiler"))
+
+library(airway)
+library(DESeq2)
+library(tidyverse)
+library(pheatmap)
+
+set.seed(42)
+knitr::opts_chunk$set(fig.width = 7, fig.height = 5, dpi = 150)
+
+# Output folders (relative to code/ folder)
+fig_dir <- file.path("..", "figures")
+res_dir <- file.path("..", "results")
+dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(res_dir, showWarnings = FALSE, recursive = TRUE)
+```
