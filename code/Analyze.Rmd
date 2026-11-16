@@ -41,3 +41,31 @@ as.data.frame(colData(se)) %>%
   select(SampleName, cell, dex, Run)  # sample metadata
 ```
 
+# 2. Cleaning and quality control
+
+```{r qc}
+# Set "untrt" as reference level
+se$dex <- relevel(se$dex, ref = "untrt")
+
+# Build DESeq2 object: control for cell line, test treatment
+dds <- DESeqDataSet(se, design = ~ cell + dex)
+
+# Remove low-count genes
+n_before <- nrow(dds)
+dds <- dds[rowSums(counts(dds) >= 10) >= 4, ]
+cat("Genes before:", n_before, "| after filtering:", nrow(dds), "\n")
+
+# Library sizes
+lib <- tibble(sample = colnames(dds),
+              reads  = colSums(counts(dds)),
+              dex    = dds$dex)
+
+p_lib <- ggplot(lib, aes(sample, reads / 1e6, fill = dex)) +
+  geom_col() +
+  labs(title = "Library size per sample", x = NULL, y = "Million reads") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p_lib
+ggsave(file.path(fig_dir, "01_library_size.png"), p_lib, width = 7, height = 4)
+```
+
