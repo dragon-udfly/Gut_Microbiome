@@ -193,3 +193,15 @@ if (requireNamespace("clusterProfiler", quietly = TRUE) &&
 }
 ```
 
+# 6. Interpretation notes
+
+- PC1/PC2 should separate treated from untreated samples and cell lines.
+- Up-regulated genes (e.g. glucocorticoid-response genes) indicate drug effect.
+- Limitation: only 4 cell lines, 8 samples.
+- Relevance: glucocorticoids are standard asthma therapy.
+
+# 7. Reproducibility
+
+```{r session}
+sessionInfo()
+```
