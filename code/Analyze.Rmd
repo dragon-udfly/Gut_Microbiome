@@ -149,3 +149,24 @@ ggsave(file.path(fig_dir, "04_volcano.png"), p_vol, width = 7, height = 5)
 table(res_df$status)
 ```
 
+```{r heatmap}
+# Top 30 genes by adjusted p-value
+top_ids <- head(res_df$ensembl[!is.na(res_df$padj)], 30)
+mat <- assay(vsd)[top_ids, ]
+mat <- mat - rowMeans(mat)                       # centre each gene
+rownames(mat) <- res_df$label[match(top_ids, res_df$ensembl)]
+
+anno <- data.frame(dex = vsd$dex, cell = vsd$cell,
+                   row.names = colnames(vsd))
+ph2 <- pheatmap(mat, annotation_col = anno, silent = TRUE,
+                main = "Top 30 differentially expressed genes")
+png(file.path(fig_dir, "05_top30_heatmap.png"),
+    width = 1000, height = 1000, res = 150)
+grid::grid.draw(ph2$gtable)
+dev.off()
+grid::grid.newpage()
+grid::grid.draw(ph2$gtable)
+pheatmap(mat, annotation_col = anno,
+         main = "Top 30 differentially expressed genes")
+```
+
