@@ -1,0 +1,7 @@
+"Group","Diagnosis","Freq"
+"Control","CD",0
+"IBD","CD",31
+"Control","UC",0
+"IBD","UC",18
+"Control","nonIBD",22
+"IBD","nonIBD",0

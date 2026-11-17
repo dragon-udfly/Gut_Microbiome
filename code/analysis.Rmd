@@ -93,3 +93,67 @@ cat("Total unique participants (subject_id):", length(unique(meta_raw$subject_id
 cat("Raw diagnosis distribution:\n")
 print(table(meta_raw$diagnosis, useNA = "ifany"))
 ```
+
+## Quality Control and Sample Deduplication
+
+In clinical microbiome studies with longitudinal sampling, repeated measures from the same patient violate the assumption of independent observations required by standard statistical hypothesis tests (such as the Wilcoxon rank-sum test and PERMANOVA). To ensure statistical independence:
+1. Only the earliest recorded sample per participant is retained by deterministically sorting by participant ID, visit number, and week number before deduplication.
+2. Samples with sequencing depth below 1,000 reads are excluded to avoid unstable richness estimates.
+3. A binary group factor is constructed (`Control` vs `IBD`, where CD and UC are merged into `IBD`).
+
+```{r preprocessing}
+# Sort deterministically by participant and longitudinal visit order
+ord <- order(meta_raw$subject_id, meta_raw$visit_number, meta_raw$week_num)
+meta_sorted <- meta_raw[ord, ]
+
+# Identify the earliest sample per subject
+first_samples <- rownames(meta_sorted)[!duplicated(meta_sorted$subject_id)]
+ps_one <- prune_samples(first_samples, ps_raw)
+cat("Samples after retaining one baseline sample per subject:", nsamples(ps_one), "\n")
+
+# Sequencing depth filtering: retain samples with >= 1,000 reads
+depths <- sample_sums(ps_one)
+cat("Minimum library depth before filtering:", min(depths), "reads\n")
+cat("Maximum library depth before filtering:", max(depths), "reads\n")
+cat("Samples with depth < 1,000 reads:", sum(depths < 1000), "\n")
+
+keep_samples <- names(depths)[depths >= 1000]
+ps_depth <- prune_samples(keep_samples, ps_one)
+cat("Samples retained after depth filtering (>= 1,000 reads):", nsamples(ps_depth), "\n")
+
+# Construct diagnosis factors
+sample_data(ps_depth)$dx3 <- factor(sample_data(ps_depth)$diagnosis, levels = c("CD", "UC", "nonIBD"))
+sample_data(ps_depth)$group <- factor(
+  ifelse(sample_data(ps_depth)$dx3 == "nonIBD", "Control", "IBD"),
+  levels = c("Control", "IBD")
+)
+
+# Export cohort summary table
+cohort_summary <- as.data.frame(table(
+  Group = sample_data(ps_depth)$group,
+  Diagnosis = sample_data(ps_depth)$dx3
+))
+write.csv(cohort_summary, file.path(fig_dir, "cohort_summary.csv"), row.names = FALSE)
+
+cat("Cohort breakdown after quality control:\n")
+print(cohort_summary)
+```
+
+## Taxonomic Prevalence Filtering for Ecological Analyses
+
+Low-prevalence taxa (present in fewer than 10% of samples) represent sequencing noise and inflate the penalty of multiple testing. For exploratory diversity and community clustering analyses, taxa present in at least 10% of the filtered samples are retained.
+
+```{r prevalence-filter}
+otu_mat <- as(otu_table(ps_depth), "matrix")
+if (!taxa_are_rows(ps_depth)) otu_mat <- t(otu_mat)
+
+# Calculate prevalence across samples
+taxa_prev <- rowSums(otu_mat > 0)
+prevalence_threshold <- 0.10 * nsamples(ps_depth)
+keep_taxa_eco <- names(taxa_prev)[taxa_prev >= prevalence_threshold]
+
+ps_filt <- prune_taxa(keep_taxa_eco, ps_depth)
+cat("Taxa retained (>= 10% prevalence):", ntaxa(ps_filt), "out of", ntaxa(ps_depth), "\n")
+```
+
+---
