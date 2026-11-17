@@ -225,3 +225,68 @@ p_alpha
 ```
 
 ---
+
+# Phase 3: Beta Diversity and Community Structure
+
+Beta diversity evaluates differences in community composition across samples. Counts are transformed to relative abundance, and pairwise Bray-Curtis dissimilarities (Bray and Curtis, 1957) are computed.
+
+Group divergence is tested via Permutational Multivariate Analysis of Variance (PERMANOVA; `vegan::adonis2`, 999 permutations). Homogeneity of multivariate dispersion is verified using `vegan::betadisper` to distinguish true community centroid shifts from within-group variance differences (Anderson, 2001; Anderson, 2006). Non-metric multidimensional scaling (NMDS) is employed for two-dimensional ordination.
+
+```{r beta-diversity}
+# Transform filtered counts to relative abundance
+ps_rel <- phyloseq::transform_sample_counts(ps_filt, function(x) x / sum(x))
+
+# Compute pairwise Bray-Curtis distance matrix
+bc_dist <- phyloseq::distance(ps_rel, method = "bray")
+
+# Test homogeneity of multivariate dispersion
+disp_model <- vegan::betadisper(bc_dist, sample_data(ps_rel)$group)
+disp_test <- anova(disp_model)
+cat("Multivariate Dispersion Test (betadisper):\n")
+cat("F =", round(disp_test$`F value`[1], 3), "; p-value =", round(disp_test$`Pr(>F)`[1], 4), "\n")
+
+# PERMANOVA test
+set.seed(42)
+permanova_res <- vegan::adonis2(
+  bc_dist ~ group,
+  data = as(sample_data(ps_rel), "data.frame"),
+  permutations = 999
+)
+cat("PERMANOVA Results (adonis2):\n")
+print(permanova_res)
+
+# NMDS Ordination
+set.seed(42)
+nmds_res <- phyloseq::ordinate(ps_rel, method = "NMDS", distance = "bray", trymax = 50)
+cat("NMDS 2D Stress Value:", round(nmds_res$stress, 4), "\n")
+
+# Plot NMDS ordination
+nmds_points <- as.data.frame(nmds_res$points)
+nmds_points$group <- sample_data(ps_rel)$group
+
+p_nmds <- ggplot(nmds_points, aes(x = MDS1, y = MDS2, color = group, fill = group)) +
+  geom_point(size = 3, alpha = 0.8) +
+  stat_ellipse(geom = "polygon", alpha = 0.2, level = 0.95, type = "t") +
+  scale_color_manual(values = c("Control" = "#2b8cbe", "IBD" = "#e41a1c")) +
+  scale_fill_manual(values = c("Control" = "#2b8cbe", "IBD" = "#e41a1c")) +
+  annotate("text", x = -Inf, y = Inf, hjust = -0.05, vjust = 1.3,
+           label = paste0("Stress = ", round(nmds_res$stress, 4),
+                          "\nPERMANOVA R² = ", round(permanova_res$R2[1], 4),
+                          ", p = ", permanova_res$`Pr(>F)`[1]),
+           size = 4, fontface = "italic") +
+  labs(
+    title = "NMDS Ordination of Gut Microbial Communities (Bray-Curtis)",
+    subtitle = "Points represent samples; ellipses represent 95% confidence intervals",
+    x = "NMDS Axis 1",
+    y = "NMDS Axis 2",
+    color = "Cohort",
+    fill = "Cohort"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+ggsave(file.path(fig_dir, "nmds.png"), p_nmds, width = 7, height = 5)
+p_nmds
+```
+
+---
