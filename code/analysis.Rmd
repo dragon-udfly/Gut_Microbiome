@@ -1,7 +1,6 @@
 ---
 title: "Comparative Gut Microbiome Diversity and Taxonomic Profiling in Inflammatory Bowel Disease"
-author: "Student Registration Number: [INSERT REGISTRATION NUMBER]"
-date: "2026-11-17"
+author: "2021/ICT/13"
 output:
   html_document:
     toc: true

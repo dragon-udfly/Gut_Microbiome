@@ -1,7 +1,5 @@
 # Comparative Gut Microbiome Diversity and Taxonomic Profiling in Inflammatory Bowel Disease using R
 
-Student registration number: [INSERT REGISTRATION NUMBER]
-
 ---
 
 ## 1. Title and Abstract
