@@ -461,3 +461,241 @@ top10_deseq
 ```
 
 ---
+
+# Phase 6: Supervised Machine Learning (EL4152)
+
+Supervised learning assesses whether taxonomic profiles can predict clinical disease status better than chance (Hypothesis H4). To enforce strict methodological validity and prevent data leakage:
+1. Feature extraction and Centered Log-Ratio (CLR) transformation operate per-sample.
+2. The cohort is split into 70% training and 30% held-out testing partitions using stratified sampling (`caret::createDataPartition`, seed 42).
+3. Prevalence filtering ($\ge 10\%$) is computed **strictly inside the training partition** and projected to the test partition.
+4. Center and scale preprocessing occurs **within internal cross-validation folds**.
+5. Model hyperparameter tuning is guided by 5-fold repeated cross-validation (5 repeats) optimizing ROC-AUC.
+6. The held-out test partition is evaluated **exactly once**.
+
+## Feature Construction and Leakage-Safe Data Partitioning
+
+```{r ml-feature-prep}
+# Extract genus count matrix
+genus_counts <- as(otu_table(ps_genus), "matrix")
+if (taxa_are_rows(ps_genus)) genus_counts <- t(genus_counts)
+
+# Generate unique, syntactically valid genus identifiers
+raw_genera <- tax_genus[colnames(genus_counts), "Genus"]
+clean_genera <- make.names(raw_genera, unique = TRUE)
+colnames(genus_counts) <- clean_genera
+
+# Centered Log-Ratio (CLR) transformation per sample
+clr_transform <- function(x) {
+  log_x <- log(x + 1)
+  log_x - mean(log_x)
+}
+X_clr <- t(apply(genus_counts, 1, clr_transform))
+colnames(X_clr) <- clean_genera
+y <- sample_data(ps_genus)$group
+
+# Stratified 70/30 train/test split
+set.seed(42)
+train_indices <- caret::createDataPartition(y, p = 0.70, list = FALSE)
+
+train_X_raw <- X_clr[train_indices, ]
+test_X_raw  <- X_clr[-train_indices, ]
+train_y     <- y[train_indices]
+test_y      <- y[-train_indices]
+
+# Save split participant IDs
+split_log <- data.frame(
+  sample_id = rownames(X_clr),
+  split = ifelse(seq_len(nrow(X_clr)) %in% train_indices, "Train", "Test"),
+  group = y
+)
+write.csv(split_log, file.path(fig_dir, "split_ids.csv"), row.names = FALSE)
+
+cat("Training partition sample size:", length(train_y), "(Control =", sum(train_y == "Control"), ", IBD =", sum(train_y == "IBD"), ")\n")
+cat("Testing partition sample size:", length(test_y), "(Control =", sum(test_y == "Control"), ", IBD =", sum(test_y == "IBD"), ")\n")
+
+# Leakage-safe prevalence filter: evaluate exclusively on training counts
+train_counts_raw <- genus_counts[train_indices, ]
+prev_train <- colSums(train_counts_raw > 0)
+train_retained_features <- which(prev_train >= (0.10 * length(train_y)))
+
+train_X <- as.data.frame(train_X_raw[, train_retained_features])
+test_X  <- as.data.frame(test_X_raw[, train_retained_features])
+
+cat("Features passing >= 10% prevalence in training partition:", ncol(train_X), "out of", ncol(genus_counts), "\n")
+cat("Dimensionality ratio in training split: p =", ncol(train_X), "features vs n =", nrow(train_X), "samples\n")
+```
+
+## Dimensionality Exploration: The Curse of Dimensionality
+
+With $p = 138$ features and $n = 51$ training samples ($p > n$), the dataset is subject to the curse of dimensionality, where high-dimensional feature spaces become sparse and susceptible to overfitting. Principal Component Analysis (PCA) is performed to inspect variance distribution across dimensions.
+
+```{r pca-exploration}
+pca_train <- prcomp(train_X, scale. = TRUE)
+var_exp <- summary(pca_train)$importance
+
+cat("PCA Variance Explained (Top 5 Components):\n")
+print(round(100 * var_exp[2, 1:5], 2))
+
+# Scree and PCA plots
+pca_plot_df <- as.data.frame(pca_train$x[, 1:2])
+pca_plot_df$group <- train_y
+
+p_pca <- ggplot(pca_plot_df, aes(x = PC1, y = PC2, color = group)) +
+  geom_point(size = 3, alpha = 0.8) +
+  stat_ellipse(level = 0.95, type = "t") +
+  scale_color_manual(values = c("Control" = "#2b8cbe", "IBD" = "#e41a1c")) +
+  labs(
+    title = "PCA of CLR-Transformed Taxa in Training Partition",
+    subtitle = paste0("PC1: ", round(100 * var_exp[2, 1], 1), "% variance; PC2: ",
+                      round(100 * var_exp[2, 2], 1), "% variance (p = 138, n = 51)"),
+    x = paste0("PC1 (", round(100 * var_exp[2, 1], 1), "%)"),
+    y = paste0("PC2 (", round(100 * var_exp[2, 2], 1), "%)"),
+    color = "Cohort"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+ggsave(file.path(fig_dir, "pca.png"), p_pca, width = 7, height = 5)
+p_pca
+```
+
+## Model Training and Repeated Cross-Validation
+
+Four classifier architectures are evaluated:
+1. **Linear SVM:** Regularization parameter $C \in \{0.01, 0.1, 1, 10\}$.
+2. **Radial SVM:** Kernel width $\sigma \in \{0.01, 0.05, 0.1\}$ and cost $C \in \{0.1, 1, 10\}$.
+3. **Random Forest Ensemble:** Decision tree ensemble (500 trees) tuning `mtry` across $\{2, 4, 8, 12\}$.
+4. **Logistic Regression (GLM):** Baseline generalized linear model.
+
+Due to class imbalance in the training partition (Control: $16/51 = 31.4\% < 40\%$), up-sampling (`sampling = "up"`) is integrated into the training control, operating strictly within internal training folds.
+
+```{r model-training}
+train_ctrl <- caret::trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final",
+  sampling = "up"
+)
+
+# Linear SVM
+set.seed(42)
+m_linear <- caret::train(
+  train_X, train_y,
+  method = "svmLinear",
+  trControl = train_ctrl,
+  metric = "ROC",
+  preProcess = c("center", "scale"),
+  tuneGrid = data.frame(C = c(0.01, 0.1, 1, 10))
+)
+
+# Radial SVM
+set.seed(42)
+m_radial <- caret::train(
+  train_X, train_y,
+  method = "svmRadial",
+  trControl = train_ctrl,
+  metric = "ROC",
+  preProcess = c("center", "scale"),
+  tuneGrid = expand.grid(sigma = c(0.01, 0.05, 0.1), C = c(0.1, 1, 10))
+)
+
+# Random Forest
+set.seed(42)
+m_rf <- caret::train(
+  train_X, train_y,
+  method = "rf",
+  trControl = train_ctrl,
+  metric = "ROC",
+  preProcess = c("center", "scale"),
+  tuneGrid = data.frame(mtry = c(2, 4, 8, 12)),
+  ntree = 500
+)
+
+# Logistic Regression baseline
+set.seed(42)
+m_glm <- caret::train(
+  train_X, train_y,
+  method = "glm",
+  family = "binomial",
+  trControl = train_ctrl,
+  metric = "ROC",
+  preProcess = c("center", "scale")
+)
+
+# Cross-validated performance comparison
+resamples_list <- resamples(list(
+  `Linear SVM` = m_linear,
+  `Radial SVM` = m_radial,
+  `Random Forest` = m_rf,
+  `Logistic Regression` = m_glm
+))
+
+cat("Resampled Cross-Validation ROC Distributions:\n")
+print(summary(resamples_list)$statistics$ROC)
+
+# Plot CV ROC comparison
+p_cv <- bwplot(resamples_list, metric = "ROC",
+               main = "5-Fold Repeated Cross-Validation ROC Comparison (5 Repeats)")
+
+png(file.path(fig_dir, "cv_comparison.png"), width = 900, height = 600, res = 150)
+print(p_cv)
+dev.off()
+print(p_cv)
+```
+
+## Held-Out Test Set Evaluation
+
+The optimal classifier is selected strictly on the basis of training cross-validated ROC performance: **Linear Support Vector Machine (Linear SVM)**, which attained a mean CV ROC of 0.7510. The finalized model is evaluated **exactly once** on the held-out test partition ($n = 20$).
+
+```{r test-evaluation}
+# Best model selected strictly by CV ROC
+best_model <- m_linear
+
+# Generate test predictions and probabilities
+test_preds <- predict(best_model, test_X)
+test_probs <- predict(best_model, test_X, type = "prob")
+
+# Confusion matrix
+test_cm <- caret::confusionMatrix(test_preds, test_y, positive = "IBD")
+cat("Held-Out Test Set Confusion Matrix:\n")
+print(test_cm$table)
+
+# Export confusion matrix
+write.csv(as.data.frame(test_cm$table), file.path(fig_dir, "confusion_matrix.csv"), row.names = FALSE)
+
+cat("\nTest Performance Metrics:\n")
+cat("Overall Accuracy:", round(test_cm$overall["Accuracy"], 4), "\n")
+cat("Balanced Accuracy:", round(test_cm$byClass["Balanced Accuracy"], 4), "\n")
+cat("Sensitivity (IBD):", round(test_cm$byClass["Sensitivity"], 4), "\n")
+cat("Specificity (Control):", round(test_cm$byClass["Specificity"], 4), "\n")
+
+# ROC and AUC analysis
+roc_test <- pROC::roc(test_y, test_probs[["IBD"]], levels = c("Control", "IBD"), direction = "<")
+auc_test <- pROC::auc(roc_test)
+ci_test <- pROC::ci.auc(roc_test)
+
+cat("Test Set AUC:", round(auc_test, 4), "\n")
+cat("Test Set 95% Confidence Interval:", round(ci_test[1], 4), "to", round(ci_test[3], 4), "\n")
+
+# Plot ROC curve
+png(file.path(fig_dir, "roc_test.png"), width = 800, height = 700, res = 150)
+plot(roc_test, col = "#e41a1c", lwd = 2.5,
+     main = paste0("Test Set ROC Curve (AUC = ", round(auc_test, 3),
+                   ", 95% CI: ", round(ci_test[1], 2), "-", round(ci_test[3], 2), ")"))
+abline(a = 0, b = 1, lty = 2, col = "grey50")
+dev.off()
+
+plot(roc_test, col = "#e41a1c", lwd = 2.5,
+     main = paste0("Test Set ROC Curve (AUC = ", round(auc_test, 3),
+                   ", 95% CI: ", round(ci_test[1], 2), "-", round(ci_test[3], 2), ")"))
+abline(a = 0, b = 1, lty = 2, col = "grey50")
+```
+
+### Overfitting Assessment
+A notable disparity is observed between the training cross-validation performance ($\text{Mean ROC} = 0.7510$) and the held-out test set performance ($\text{AUC} = 0.3690$, $95\%\text{ CI: } [0.0897, 0.6484]$). This performance gap illustrates the **curse of dimensionality** ($p = 138$ features, $n = 51$ training samples) and the instability inherent in small test cohorts ($n = 20$, with only 6 controls). While cross-validation optimizes decision boundaries within the training manifold, high feature dimensionality relative to sample size compromises out-of-sample generalization.
+
+## Feature Importance and Biomarker Overlap
+

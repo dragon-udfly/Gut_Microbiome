@@ -1,0 +1,5 @@
+"Prediction","Reference","Freq"
+"Control","Control",1
+"IBD","Control",5
+"Control","IBD",3
+"IBD","IBD",11
