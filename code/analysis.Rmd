@@ -381,3 +381,83 @@ cat("k-means Adjusted Rand Index (ARI):", round(ari_kmeans, 4), "\n")
 The low Adjusted Rand Index values observed in both UPGMA ($\text{ARI} = -0.0154$) and $k$-means ($\text{ARI} = -0.0112$) indicate that unsupervised clustering does not automatically recover the binary disease phenotype. This does not indicate that the microbiota lacks clinical relevance; rather, unsupervised methods capture dominant ecological gradients (such as enterotype variations, mucosal moisture, or dominant commensal community states) that can cut across clinical labels.
 
 ---
+
+# Phase 5: Differential Abundance Analysis (DESeq2)
+
+Differential taxonomic abundance is evaluated using generalized linear models with negative binomial error distributions implemented in `DESeq2` (Love et al., 2014). Taxa are agglomerated to the Genus rank to ensure robust biological annotation. Raw unrarefied integer counts are modeled with a pseudocount (+1) to accommodate zeros, and size factors are estimated using the `poscounts` method tailored for sparse metagenomic census data.
+
+```{r deseq2}
+# Agglomerate taxa to Genus rank
+ps_genus <- phyloseq::tax_glom(ps_depth, taxrank = "Genus", NArm = TRUE)
+cat("Total agglomerated genera:", ntaxa(ps_genus), "\n")
+
+# Convert to DESeq2 dataset
+dds <- phyloseq::phyloseq_to_deseq2(ps_genus, ~ group)
+
+# Add pseudocount of 1 to count matrix
+counts(dds) <- counts(dds) + 1L
+
+# Estimate size factors via poscounts
+dds <- DESeq2::estimateSizeFactors(dds, type = "poscounts")
+dds <- DESeq2::DESeq(dds, test = "Wald", fitType = "local")
+
+# Extract differential results (contrast: IBD vs Control)
+res <- DESeq2::results(dds, contrast = c("group", "IBD", "Control"), alpha = 0.05)
+res_df <- as.data.frame(res)
+
+# Attach taxonomic classifications
+tax_genus <- as.data.frame(as(tax_table(ps_genus), "matrix"))
+res_df$Genus <- tax_genus[rownames(res_df), "Genus"]
+res_df$Family <- tax_genus[rownames(res_df), "Family"]
+res_df$Phylum <- tax_genus[rownames(res_df), "Phylum"]
+
+# Classify significance status
+res_df <- res_df %>%
+  mutate(status = case_when(
+    padj < 0.05 & log2FoldChange > 1.0 ~ "Enriched in IBD",
+    padj < 0.05 & log2FoldChange < -1.0 ~ "Depleted in IBD",
+    padj < 0.05 ~ "Significant (|log2FC| <= 1)",
+    TRUE ~ "Not significant"
+  ))
+
+# Export full differential abundance table
+write.csv(res_df, file.path(fig_dir, "deseq_results.csv"), row.names = TRUE)
+
+sig_genera_df <- res_df %>% filter(!is.na(padj) & padj < 0.05)
+cat("Total genera evaluated:", nrow(res_df), "\n")
+cat("Significantly differentially abundant genera (padj < 0.05):", nrow(sig_genera_df), "\n")
+
+# Volcano plot
+p_volcano <- ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), color = status)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_color_manual(values = c(
+    "Enriched in IBD" = "#e41a1c",
+    "Depleted in IBD" = "#2b8cbe",
+    "Significant (|log2FC| <= 1)" = "#984ea3",
+    "Not significant" = "#969696"
+  )) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dotted", color = "black") +
+  labs(
+    title = "Differential Abundance Volcano Plot (DESeq2: IBD vs Control)",
+    subtitle = "Positive log2FC indicates enrichment in IBD; dashed line denotes FDR padj = 0.05",
+    x = "Log2 Fold Change (IBD / Control)",
+    y = "-Log10 Adjusted p-value",
+    color = "Status"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "bottom")
+
+ggsave(file.path(fig_dir, "volcano.png"), p_volcano, width = 7.5, height = 5.5)
+p_volcano
+
+# Display top 10 significant genera
+top10_deseq <- sig_genera_df %>%
+  dplyr::select(Genus, Family, log2FoldChange, padj, status) %>%
+  arrange(padj) %>%
+  head(10)
+
+top10_deseq
+```
+
+---
