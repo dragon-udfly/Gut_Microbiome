@@ -1,0 +1,95 @@
+---
+title: "Comparative Gut Microbiome Diversity and Taxonomic Profiling in Inflammatory Bowel Disease"
+author: "Student Registration Number: [INSERT REGISTRATION NUMBER]"
+date: "2026-11-17"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+# Ensure pandoc is discovered when running headless
+if (!rmarkdown::pandoc_available()) {
+  Sys.setenv(RSTUDIO_PANDOC = "C:/Program Files/RStudio/resources/app/bin/quarto/bin/tools")
+  rmarkdown::find_pandoc(dir = "C:/Program Files/RStudio/resources/app/bin/quarto/bin/tools")
+}
+
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6,
+  dpi = 150
+)
+```
+
+# Project Overview and Environment Setup
+
+This project investigates gut microbiome community structure and taxonomic alterations in Inflammatory Bowel Disease (IBD) compared to non-IBD controls using public 16S rRNA sequencing data from the integrative Human Microbiome Project (iHMP / HMP2), accessed via the Bioconductor package `HMP2Data` (Stansfield et al., 2024).
+
+The workflow integrates analytical techniques from:
+- **IT4133 Bioinformatics and Computational Biology:** Community diversity, Bray-Curtis dissimilarity, UPGMA hierarchical clustering, pattern recognition, and negative binomial differential expression modeling.
+- **EL4152 Machine Learning:** Supervised and unsupervised learning, $k$-means clustering, Support Vector Machines (Linear and Radial), Random Forest ensembles, rigorous data leakage prevention, cross-validation, and classification performance evaluation under the curse of dimensionality.
+
+## Library Loading
+
+```{r libraries}
+# Configure library paths
+.libPaths(c("C:/Users/User/AppData/Local/R/win-library/4.6", .libPaths()))
+
+# Core packages
+library(here)
+library(HMP2Data)
+library(phyloseq)
+library(tidyverse)
+library(vegan)
+library(cluster)
+library(mclust)
+library(ape)
+library(DESeq2)
+library(caret)
+library(randomForest)
+library(pROC)
+library(e1071)
+library(kernlab)
+library(pheatmap)
+
+# Global seed for stochastic reproducibility
+set.seed(42)
+
+# Ensure figures output directory exists using relative paths
+fig_dir <- here::here("figures")
+dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
+```
+
+---
+
+# Phase 0 & 1: Data Import, Inspection, and Preprocessing
+
+## Data Loading and Initial Inspection
+
+The primary data object is retrieved programmatically via `HMP2Data::IBD16S()`.
+
+```{r data-import}
+# Retrieve the IBD 16S phyloseq object
+ps_raw <- HMP2Data::IBD16S()
+
+cat("Raw dataset dimensions:\n")
+cat("Total samples:", nsamples(ps_raw), "\n")
+cat("Total taxa:", ntaxa(ps_raw), "\n")
+cat("Taxonomic ranks:", paste(rank_names(ps_raw), collapse = " > "), "\n")
+cat("Taxa are rows:", taxa_are_rows(ps_raw), "\n")
+
+# Extract metadata as a standard data frame
+meta_raw <- as(sample_data(ps_raw), "data.frame")
+cat("Total unique participants (subject_id):", length(unique(meta_raw$subject_id)), "\n")
+cat("Raw diagnosis distribution:\n")
+print(table(meta_raw$diagnosis, useNA = "ifany"))
+```
