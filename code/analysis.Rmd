@@ -290,3 +290,94 @@ p_nmds
 ```
 
 ---
+
+# Phase 4: Unsupervised Learning (IT4133 & EL4152)
+
+Unsupervised pattern recognition explores whether unlabeled microbial abundance profiles naturally partition into clusters corresponding to clinical status.
+
+## UPGMA Hierarchical Clustering
+
+Unweighted Pair Group Method with Arithmetic Mean (UPGMA; Sokal and Michener, 1958) is performed using average-linkage hierarchical clustering (`hclust(..., method = "average")`) on Bray-Curtis dissimilarities. The cophenetic correlation coefficient is calculated to assess distance preservation.
+
+```{r upgma}
+# UPGMA average-linkage clustering
+hc_upgma <- hclust(bc_dist, method = "average")
+coph_corr <- cor(cophenetic(hc_upgma), bc_dist)
+cat("UPGMA Cophenetic Correlation Coefficient:", round(coph_corr, 4), "\n")
+
+# Convert to phylo object for tree plotting with ape
+phylo_tree <- ape::as.phylo(hc_upgma)
+tip_colors <- ifelse(sample_data(ps_rel)$group[match(phylo_tree$tip.label, sample_names(ps_rel))] == "Control",
+                     "#2b8cbe", "#e41a1c")
+
+png(file.path(fig_dir, "upgma_dendrogram.png"), width = 1200, height = 900, res = 150)
+plot(phylo_tree, tip.color = tip_colors, cex = 0.6,
+     main = paste0("UPGMA Hierarchical Clustering (Cophenetic r = ", round(coph_corr, 3), ")"))
+legend("topleft", legend = c("Control", "IBD"), fill = c("#2b8cbe", "#e41a1c"), bty = "n", cex = 0.9)
+dev.off()
+
+# Display tree in notebook
+plot(phylo_tree, tip.color = tip_colors, cex = 0.6,
+     main = paste0("UPGMA Hierarchical Clustering (Cophenetic r = ", round(coph_corr, 3), ")"))
+legend("topleft", legend = c("Control", "IBD"), fill = c("#2b8cbe", "#e41a1c"), bty = "n", cex = 0.9)
+
+# Cut tree at k = 2
+upgma_clusters <- cutree(hc_upgma, k = 2)
+upgma_tab <- table(Cluster = upgma_clusters, Group = sample_data(ps_rel)$group)
+ari_upgma <- mclust::adjustedRandIndex(upgma_clusters, sample_data(ps_rel)$group)
+
+cat("UPGMA (k = 2) Cluster vs Group Contingency Table:\n")
+print(upgma_tab)
+cat("UPGMA Adjusted Rand Index (ARI):", round(ari_upgma, 4), "\n")
+```
+
+## $k$-Means Clustering on PCoA Coordinates
+
+$k$-means clustering operates in Euclidean space. Non-Euclidean Bray-Curtis dissimilarities are projected into Euclidean coordinate space via Principal Coordinates Analysis (PCoA; `cmdscale`, $k = 5$). Cluster validity across $k = 2$ to $k = 6$ is evaluated using average silhouette width (`cluster::silhouette`) to identify optimal cluster separation.
+
+```{r kmeans-clustering}
+# Classical multidimensional scaling (PCoA) to Euclidean space
+pcoa_coords <- cmdscale(bc_dist, k = 5)
+
+# Silhouette analysis across k = 2 to 6
+k_range <- 2:6
+sil_scores <- sapply(k_range, function(k) {
+  set.seed(42)
+  km <- kmeans(pcoa_coords, centers = k, nstart = 25)
+  ss <- cluster::silhouette(km$cluster, dist(pcoa_coords))
+  mean(ss[, "sil_width"])
+})
+
+sil_df <- data.frame(k = k_range, Silhouette = sil_scores)
+
+p_sil <- ggplot(sil_df, aes(x = k, y = Silhouette)) +
+  geom_line(color = "#2c7fb8", linewidth = 1) +
+  geom_point(color = "#253494", size = 3) +
+  scale_x_continuous(breaks = k_range) +
+  labs(
+    title = "Silhouette Analysis for k-Means Clustering on PCoA Coordinates",
+    subtitle = "Evaluated on first 5 PCoA axes of Bray-Curtis dissimilarities",
+    x = "Number of Clusters (k)",
+    y = "Average Silhouette Width"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+ggsave(file.path(fig_dir, "kmeans_silhouette.png"), p_sil, width = 7, height = 4.5)
+p_sil
+
+# Fit k-means with k = 2
+set.seed(42)
+km_res <- kmeans(pcoa_coords, centers = 2, nstart = 25)
+km_tab <- table(Cluster = km_res$cluster, Group = sample_data(ps_rel)$group)
+ari_kmeans <- mclust::adjustedRandIndex(km_res$cluster, sample_data(ps_rel)$group)
+
+cat("k-means (k = 2) Cluster vs Group Contingency Table:\n")
+print(km_tab)
+cat("k-means Adjusted Rand Index (ARI):", round(ari_kmeans, 4), "\n")
+```
+
+### Interpretation Guard
+The low Adjusted Rand Index values observed in both UPGMA ($\text{ARI} = -0.0154$) and $k$-means ($\text{ARI} = -0.0112$) indicate that unsupervised clustering does not automatically recover the binary disease phenotype. This does not indicate that the microbiota lacks clinical relevance; rather, unsupervised methods capture dominant ecological gradients (such as enterotype variations, mucosal moisture, or dominant commensal community states) that can cut across clinical labels.
+
+---
