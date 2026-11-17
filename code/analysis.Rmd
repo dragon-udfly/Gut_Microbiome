@@ -699,3 +699,48 @@ A notable disparity is observed between the training cross-validation performanc
 
 ## Feature Importance and Biomarker Overlap
 
+To identify which microbial features most strongly drive classification decisions, Random Forest variable importance (mean decrease in Gini impurity) is computed. The top 15 predictive genera are compared with the 23 significantly altered genera identified by univariate negative binomial modeling in `DESeq2`.
+
+```{r feature-importance}
+# Extract Random Forest variable importance
+rf_importance <- varImp(m_rf)$importance
+rf_importance$Feature <- rownames(rf_importance)
+
+top15_rf <- rf_importance %>%
+  arrange(desc(Overall)) %>%
+  head(15)
+
+# Plot top 15 features
+p_importance <- ggplot(top15_rf, aes(x = reorder(Feature, Overall), y = Overall)) +
+  geom_col(fill = "#3182bd", width = 0.7) +
+  coord_flip() +
+  labs(
+    title = "Top 15 Predictive Genera (Random Forest Variable Importance)",
+    subtitle = "Importance measured by Mean Decrease in Gini Impurity",
+    x = "Genus Feature",
+    y = "Relative Importance Score"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+ggsave(file.path(fig_dir, "rf_importance.png"), p_importance, width = 7.5, height = 5)
+p_importance
+
+# Cross-methodological comparison: overlap with DESeq2 significant genera
+deseq_sig_genera <- sig_genera_df$Genus
+top15_clean_names <- top15_rf$Feature
+
+# Map clean feature names back to taxonomic names
+overlap_df <- data.frame(
+  RF_Feature = top15_clean_names,
+  DESeq2_Significant = top15_clean_names %in% make.names(deseq_sig_genera, unique = FALSE) |
+                       top15_clean_names %in% deseq_sig_genera
+)
+
+write.csv(overlap_df, file.path(fig_dir, "overlap_ml_vs_deseq.csv"), row.names = FALSE)
+
+cat("Overlap between Top 15 Random Forest Predictors and DESeq2 Significant Genera:\n")
+print(overlap_df)
+```
+
+---
