@@ -157,3 +157,71 @@ cat("Taxa retained (>= 10% prevalence):", ntaxa(ps_filt), "out of", ntaxa(ps_dep
 ```
 
 ---
+
+# Phase 2: Alpha Diversity Analysis
+
+Within-sample alpha diversity is assessed using Shannon entropy (sensitive to both richness and evenness) and the Gini-Simpson index (weighted toward dominant species). Because alpha diversity indices are sensitive to variation in sequencing depth, library sizes are rarefied to uniform sampling depth prior to metric computation (McMurdie and Holmes, 2014).
+
+Between-group differences are tested using two-tailed Wilcoxon rank-sum tests (Mann-Whitney U), as diversity indices frequently deviate from normality.
+
+```{r alpha-diversity}
+# Rarefy to minimum observed sequencing depth
+min_seq_depth <- min(sample_sums(ps_depth))
+cat("Rarefying to uniform depth:", min_seq_depth, "reads\n")
+
+ps_rarefied <- phyloseq::rarefy_even_depth(
+  ps_depth,
+  sample.size = min_seq_depth,
+  rngseed = 42,
+  verbose = FALSE
+)
+
+# Calculate alpha diversity indices
+alpha_metrics <- phyloseq::estimate_richness(ps_rarefied, measures = c("Shannon", "Simpson"))
+alpha_metrics$group <- sample_data(ps_rarefied)$group
+alpha_metrics$sample_id <- rownames(alpha_metrics)
+
+# Statistical hypothesis testing (Wilcoxon rank-sum test)
+w_shannon <- wilcox.test(Shannon ~ group, data = alpha_metrics)
+w_simpson <- wilcox.test(Simpson ~ group, data = alpha_metrics)
+
+shannon_ctrl_med <- median(alpha_metrics$Shannon[alpha_metrics$group == "Control"])
+shannon_ibd_med  <- median(alpha_metrics$Shannon[alpha_metrics$group == "IBD"])
+simpson_ctrl_med <- median(alpha_metrics$Simpson[alpha_metrics$group == "Control"])
+simpson_ibd_med  <- median(alpha_metrics$Simpson[alpha_metrics$group == "IBD"])
+
+cat("Alpha Diversity Statistics:\n")
+cat("Shannon Index: Control Median =", round(shannon_ctrl_med, 3),
+    "; IBD Median =", round(shannon_ibd_med, 3),
+    "; W =", w_shannon$statistic, "; p-value =", round(w_shannon$p.value, 4), "\n")
+cat("Simpson Index: Control Median =", round(simpson_ctrl_med, 3),
+    "; IBD Median =", round(simpson_ibd_med, 3),
+    "; W =", w_simpson$statistic, "; p-value =", round(w_simpson$p.value, 4), "\n")
+
+# Visualization: Alpha diversity boxplots with jitter
+alpha_long <- alpha_metrics %>%
+  pivot_longer(cols = c("Shannon", "Simpson"), names_to = "Metric", values_to = "Diversity") %>%
+  mutate(p_label = ifelse(Metric == "Shannon",
+                          paste0("Wilcoxon p = ", round(w_shannon$p.value, 4)),
+                          paste0("Wilcoxon p = ", round(w_simpson$p.value, 4))))
+
+p_alpha <- ggplot(alpha_long, aes(x = group, y = Diversity, fill = group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7, width = 0.5) +
+  geom_jitter(width = 0.2, alpha = 0.6, size = 2) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  scale_fill_manual(values = c("Control" = "#2b8cbe", "IBD" = "#e41a1c")) +
+  geom_text(aes(x = 1.5, y = Inf, label = p_label), vjust = 1.5, check_overlap = TRUE, size = 4) +
+  labs(
+    title = "Alpha Diversity Comparison in Gut Microbiome (IBD vs Control)",
+    subtitle = "Rarefied to uniform depth of 1,415 reads; Wilcoxon rank-sum test",
+    x = "Cohort",
+    y = "Diversity Metric Value"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "none", plot.title = element_text(face = "bold"))
+
+ggsave(file.path(fig_dir, "alpha.png"), p_alpha, width = 7, height = 5)
+p_alpha
+```
+
+---
